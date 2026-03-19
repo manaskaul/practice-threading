@@ -1,0 +1,360 @@
+# Executor Framework
+
+This section explains:
+- `Runnable`
+- `Callable`
+- `Future`
+- Thread pools
+
+## Why `new Thread()` Is Almost Always Wrong
+
+Beginner code:
+```java
+new Thread(task).start();
+```
+
+If you do this repeatedly in a server:
+- 1000 requests → 1000 threads
+
+**Problems:**
+- memory usage
+- context switching
+- CPU overhead
+- scheduler thrashing
+
+Servers need controlled thread usage.
+
+## Solution — Thread Pools
+
+Instead of creating threads for every task:
+**Tasks → Queue → Worker Threads**
+
+**Example:**
+```
+    Task1
+    Task2
+    Task3
+    Task4
+    ↓
+    [ Task Queue ]
+    ↓
+    Thread1
+    Thread2
+    Thread3
+```
+Threads are reused.
+
+## Executor Framework
+
+Java provides this abstraction:
+- `Executor`
+    - `ExecutorService`
+
+**Basic Example:**
+```java
+ExecutorService executor = Executors.newFixedThreadPool(3);
+
+executor.submit(() -> {
+    System.out.println("Task running");
+});
+```
+
+**What happens internally:**
+1.  `submit` task
+2.  task added to queue
+3.  worker thread picks it up
+4.  task executes
+
+The above is `Runnable` with Executors. But this does not return a result.
+That’s where `Callable` comes in.
+
+## Callable
+
+`Callable` is like `Runnable` but returns a value.
+- **Runnable:** `void run()`
+- **Callable:** `V call()`
+
+### Submitting Callable
+
+```java
+ExecutorService executor = Executors.newFixedThreadPool(2);
+Callable<Integer> task = () -> 42;
+Future<Integer> future = executor.submit(task);
+```
+
+The return value is not available immediately. Instead you get a `Future`.
+
+## Future
+
+A `Future` represents a result that will be available later.
+1.  `submit` task
+2.  `Future` returned immediately
+3.  task runs in background
+4.  `Future` eventually holds result
+
+### Getting the Result
+
+```java
+Integer result = future.get();
+```
+`get()` blocks until the task finishes.
+
+**Example:**
+```java
+ExecutorService executor = Executors.newFixedThreadPool(2);
+Callable<Integer> task = () -> {
+    Thread.sleep(2000);
+    return 100;
+};
+
+Future<Integer> future = executor.submit(task);
+System.out.println("Task submitted");
+
+Integer result = future.get(); // BLOCKS HERE
+System.out.println(result);
+```
+
+**Output:**
+```
+Task submitted
+(wait 2 seconds)
+100
+```
+
+- **Runnable** → task without result
+- **Callable** → task with result
+- **Future** → handle to task result
+- **ExecutorService** → runs tasks using thread pool
+
+# Thread Pools and the Executor Framework
+
+## The Core Problem Thread Pools Solve
+
+Imagine a server handling HTTP requests.
+Naive implementation:
+```java
+while(true) {
+    Socket socket = server.accept();
+    new Thread(() -> handleRequest(socket)).start();
+}
+```
+
+If 1000 requests arrive, you create 1000 threads.
+**Problems:**
+- huge memory usage
+- context switching overhead
+- CPU thrashing
+- unpredictable latency
+
+Threads are expensive OS resources.
+
+## The Thread Pool Idea
+
+Instead of creating threads for every task:
+- Create a fixed set of worker threads
+- Reuse them for tasks
+
+**Architecture:**
+```
+    Tasks submitted
+        ↓
+    Task Queue
+        ↓
+    Worker Thread 1
+    Worker Thread 2
+    Worker Thread 3
+```
+Threads stay alive and repeatedly execute tasks.
+
+## Basic Example
+```java
+ExecutorService executor = Executors.newFixedThreadPool(3);
+executor.submit(() -> {
+    System.out.println(Thread.currentThread().getName());
+});
+```
+
+**What happens internally:**
+1.  `submit` task
+2.  task added to queue
+3.  worker thread picks task
+4.  task executes
+
+## Inside a Thread Pool
+
+A thread pool has four main components.
+```
+        ThreadPoolExecutor
+                |
+    -------------------------
+    |           |           |
+ Workers      Queue     Rejection
+```
+
+1.  **Worker threads**
+    - Threads that execute tasks.
+        - `pool-1-thread-1`
+        - `pool-1-thread-2`
+        - `pool-1-thread-3`
+
+2.  **Task Queue**
+    - Stores tasks waiting to execute.
+    - Usually:
+        - `LinkedBlockingQueue`
+        - `ArrayBlockingQueue`
+
+3.  **Task Submission**
+    - Tasks are submitted using:
+        - `executor.submit(task)`
+    - **Difference:**
+        - `execute()` → `Runnable` only
+        - `submit()` → `Runnable` or `Callable`
+
+4.  **Rejection Policy**
+    - If the queue is full and no threads available: task rejected
+    - **Policies include:**
+        - `AbortPolicy`
+        - `CallerRunsPolicy`
+        - `DiscardPolicy`
+        - `DiscardOldestPolicy`
+
+## Types of Thread Pools
+
+1.  **Fixed Thread Pool**
+    ```java
+    ExecutorService pool = Executors.newFixedThreadPool(4);
+    ```
+    - **Characteristics:**
+        - 4 threads always
+        - unbounded queue
+    - **Execution model:**
+        - tasks → queue → workers
+    - If tasks exceed workers: tasks wait in queue
+
+2.  **Cached Thread Pool**
+    ```java
+    Executors.newCachedThreadPool();
+    ```
+    - **Characteristics:**
+        - unbounded threads
+        - threads reused if idle
+        - threads expire after 60s
+    - **Good for:**
+        - short-lived async tasks
+    - Dangerous if misused.
+
+3.  **Single Thread Executor**
+    ```java
+    Executors.newSingleThreadExecutor();
+    ```
+    - **Guarantees:**
+        - tasks executed sequentially
+    - **Used for:**
+        - ordering guarantees
+        - event processing
+
+4.  **Scheduled Thread Pool**
+    ```java
+    Executors.newScheduledThreadPool(2);
+    ```
+    - **Used for:**
+        - periodic jobs
+        - delayed execution
+        - cron-like scheduling
+    - **Example:** `scheduleAtFixedRate()`
+
+## ThreadPoolExecutor (The Real Engine)
+
+All these factories create a `ThreadPoolExecutor` internally.
+
+**Constructor:**
+```java
+ThreadPoolExecutor(
+    corePoolSize,
+    maximumPoolSize,
+    keepAliveTime,
+    unit,
+    workQueue
+)
+```
+
+**Example:**
+```java
+ExecutorService pool = new ThreadPoolExecutor(
+                            2,
+                            4,
+                            60,
+                            TimeUnit.SECONDS,
+                            new LinkedBlockingQueue<>()
+                        );
+```
+
+### Thread Pool Growth
+1.  threads grow until `corePoolSize`
+2.  then queue grows until the size (very dangerous if kept unbounded)
+3.  then grow to `maxPoolSize`
+
+`ThreadPoolExecutor` IS the real implementation. `newFixedThreadPool()` and `newCachedThreadPool()` are just preconfigured wrappers around `ThreadPoolExecutor`. They do not use each other. They simply construct a `ThreadPoolExecutor` with different parameters.
+
+The commonly used ones are five:
+- `newFixedThreadPool()`
+- `newCachedThreadPool()`
+- `newSingleThreadExecutor()`
+- `newScheduledThreadPool()`
+- `newWorkStealingPool()`
+
+One More Executor Type You Will Encounter:
+- Not from `Executors`, but very common:
+    - `ForkJoinPool.commonPool()`
+
+## How to size threadpool correctly (core size and max size)
+
+Thread pool size depends on the workload type:
+- **CPU-bound**
+- **IO-bound**
+
+### CPU-Bound Workload
+
+CPU-bound tasks spend almost all their time doing computation, not waiting.
+**Examples:**
+- encryption
+- image processing
+- compression
+- numerical calculations
+- heavy algorithms
+
+If you have **8 CPU cores**, you can run 8 threads truly in parallel.
+- Core1 → Thread1
+- Core2 → Thread2
+- ...
+- Core8 → Thread8
+
+If you create more threads, like 16, the OS must context switch, which adds overhead.
+So the optimal size is roughly: **#threads ≈ #CPU cores**
+
+**The Classic Formula for CPU-bound workloads:**
+> Thread Pool Size ≈ Number of CPU cores
+
+In Java you can get this value:
+```java
+Runtime.getRuntime().availableProcessors();
+```
+
+### IO-Bound Workloads
+
+Now suppose tasks spend most time waiting for I/O:
+**Examples:**
+- database queries
+- HTTP calls
+- disk reads
+- external APIs
+
+During I/O wait, the thread is idle and the CPU is not used. So you can have many more threads than cores.
+
+**Typical rule:**
+> Thread count = cores × (1 + wait_time / compute_time)
+
+Which often becomes:
+- `cores × 10`
+- `cores × 20`
+in I/O heavy systems.
